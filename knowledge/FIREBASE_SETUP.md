@@ -31,13 +31,13 @@ The Firebase configuration is set up in `index.html` using the modern ES6 module
 
 ```javascript
 const firebaseConfig = {
-  apiKey: "AIzaSyCiWgs-DCo2Yk2JR1VbDqV7BPd8ByKCZ_c",
-  authDomain: "trialautomation-b68b7.firebaseapp.com",
-  projectId: "trialautomation-b68b7",
-  storageBucket: "trialautomation-b68b7.firebasestorage.app",
-  messagingSenderId: "515232908298",
-  appId: "1:515232908298:web:18eabc6c98bbf8c5070bf3",
-  measurementId: "G-Z8X7QRL8H3"
+  apiKey: "AIzaSyCr7qtAYPckGP5vHM_Kmk5bG_x8ercatwg",
+  authDomain: "spell-daily.firebaseapp.com",
+  projectId: "spell-daily",
+  storageBucket: "spell-daily.firebasestorage.app",
+  messagingSenderId: "322219140242",
+  appId: "1:322219140242:web:2dd5f7d0cfb9914829b24b",
+  measurementId: "G-1BH4H225YY"
 };
 ```
 

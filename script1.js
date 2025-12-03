@@ -73,9 +73,16 @@ class SpellingApp {
     twoOptionDistractors,
     wordMeanings,
     contextChoice,
-    correctSentence
+    correctSentence,
+    wordsWithStreak
   ) {
     this.usercode = usercode;
+    if (window.LogRocket) {
+      LogRocket.identify(usercode, {
+        name: usercode || "Spelling Drill Player",
+        gameType: "spelling_drill",
+      });
+    }
 
     // Check if this is test mode (code ends with 'test')
     this.isTestMode = usercode && usercode.toLowerCase().endsWith("test");
@@ -133,6 +140,7 @@ class SpellingApp {
     this.typedWord = "";
     this.maxLength = 0;
     this.selectedOption = null;
+    this.wordsWithStreak = {};
 
     // Word parts game state
     this.wordPartsAttempt = 1;
@@ -172,7 +180,7 @@ class SpellingApp {
     // Initialize sentence templates and word distractors for correct-word game
     this.sentenceTemplates = JSON.parse(sentenceTemplates) || {};
 
-    this.wordDistractors = JSON.parse(wordDistractors) || {}
+    this.wordDistractors = JSON.parse(wordDistractors) || {};
 
     // Create dynamic finalSequence - can handle any number of games
     if (finalSequence && finalSequence.length > 0) {
@@ -183,7 +191,7 @@ class SpellingApp {
     this.fillupsBlankPositions = JSON.parse(fillupsBlankPositions) || {};
 
     this.twoOptionDistractors = JSON.parse(twoOptionDistractors) || {};
-
+    this.wordsWithStreak = wordsWithStreak|| {};
 
     this.initializeQuestions();
     this.bindEvents();
@@ -194,7 +202,6 @@ class SpellingApp {
     // Check for existing progress before starting the game
     this.initializeGame();
 
-
     // console.log("🔍 Word hints:",  wordHints);
     // console.log("🔍 Word parts data:",  wordPartsData);
     // console.log("🔍 Sentence templates:",  sentenceTemplates);
@@ -202,7 +209,6 @@ class SpellingApp {
     // console.log("🔍 Final sequence:",  finalSequence);
     // console.log("🔍 Fillups blank positions:",  fillupsBlankPositions);
     // console.log("🔍 Two option distractors:",  twoOptionDistractors);
-
   }
 
   async initializeGame() {
@@ -278,8 +284,8 @@ class SpellingApp {
         word: actualWord,
         type: item.type,
       });
-
-    });  }
+    });
+  }
 
   bindEvents() {
     document.getElementById("soundButton").addEventListener("click", () => {
@@ -305,6 +311,7 @@ class SpellingApp {
         this.typingAnalytics.speakerClicks++;
       }
     });
+    updateEmojiInProgressBar("by_rating/2");
     document.getElementById("checkButton").addEventListener("click", () => this.checkAnswer());
     document.getElementById("continueButton").addEventListener("click", async () => await this.nextQuestion());
     document.getElementById("startPracticeButton").addEventListener("click", () => this.startPracticeMode());
@@ -599,7 +606,7 @@ class SpellingApp {
     // Learning mode has been disabled as requested
 
     // Stop all speech synthesis when starting a new question
-    if (speechSynthesis.speaking) {
+    if (speechSynthesis && speechSynthesis.speaking) {
       speechSynthesis.cancel();
     }
 
@@ -662,6 +669,10 @@ class SpellingApp {
       soundButtonsContainer.style.display = "flex";
     }
 
+    if(this.wordsWithStreak[question.word] > 3){
+      question.type = "full-typing";
+    }
+
     // Display based on question type
     switch (question.type) {
       case "typing":
@@ -693,6 +704,9 @@ class SpellingApp {
         break;
       case "correct-sentence":
         this.displayCorrectSentence(question.word);
+        break;
+      case "full-typing":
+        this.displayFullTypingQuestion();
         break;
     }
 
@@ -742,9 +756,10 @@ class SpellingApp {
       // Check if this word already has an entry for this user (first-time only rule)
       const existingQuery = query(
         collection(db, "user-activity"),
-        where("usercode", "==", this.usercode),
+        where("code", "==", this.usercode),
         where("word", "==", this.typingAnalytics.word),
-        where("gameType", "==", "typing")
+        where("gameType", "==", "typing"),
+        where("submittedAt", ">=", new Date(new Date().setHours(0, 0, 0, 0)).toISOString())
       );
 
       const existingDocs = await getDocs(existingQuery);
@@ -766,6 +781,7 @@ class SpellingApp {
         submittedAt: getTodayDateString(),
         gameType: "typing",
         sessionId: this.sessionId || "unknown",
+        testStartTime: this.gameStarted || getTodayDateISOString(),
       };
 
       await setDoc(docRef, analyticsData);
@@ -775,6 +791,7 @@ class SpellingApp {
       this.typingAnalytics.submitted = true;
     } catch (error) {
       console.error("❌ Error submitting typing analytics to Firebase:", error);
+      logError("❌ Error submitting typing analytics to Firebase:", error);
     }
   }
 
@@ -785,6 +802,10 @@ class SpellingApp {
     document.getElementById("questionType").textContent = "TYPE WHAT YOU HEAR";
     document.getElementById("inputContainer").style.display = "block";
     document.getElementById("optionsContainer").style.display = "none";
+
+    // Change background to PURPLE
+    document.body.style.background = "linear-gradient(135deg, #8B5CF6 0%, #6B21A8 100%)";
+    document.body.style.transition = "background 0.5s ease";
 
     // Ensure wordBoxes is visible for typing games
     const wordBoxes = document.getElementById("wordBoxes");
@@ -813,6 +834,230 @@ class SpellingApp {
 
     // Ensure check button is disabled initially since no letters are typed
     document.getElementById("checkButton").disabled = true;
+  }
+
+  displayFullTypingQuestion() {
+    // Remove letter-scramble game class if present
+    document.querySelector(".app-container").classList.remove("options-2-active");
+
+    document.getElementById("questionType").textContent = "TYPE WHAT YOU HEAR - 16 SECONDS";
+    document.getElementById("inputContainer").style.display = "block";
+    document.getElementById("optionsContainer").style.display = "none";
+
+    // Ensure wordBoxes is visible for typing games
+    const wordBoxes = document.getElementById("wordBoxes");
+    if (wordBoxes) wordBoxes.style.display = "flex";
+
+    // Show keyboard for typing games
+    const keyboard = document.getElementById("keyboard");
+    if (keyboard) keyboard.style.display = "block";
+
+    // Setup word boxes
+    const question = this.allQuestions[this.currentQuestionIndex];
+    this.maxLength = question.word.length;
+    this.typedWord = "";
+
+    // Reset fillups mode flag to ensure typing game doesn't show dashes
+    this.fillupsMode = false;
+
+    // Hide previous attempt initially
+    document.getElementById("previousAttempt").style.display = "none";
+
+    // Initialize analytics for this typing question
+    this.initializeTypingAnalytics(question.word);
+
+    // Create long dash display instead of individual letter boxes
+    this.createLongDashDisplay();
+
+    // Add NEW label
+    this.addNewLabel();
+
+    // Start 16-second timer
+    this.startFullTypingTimer();
+  }
+
+  createLongDashDisplay() {
+    const wordBoxes = document.getElementById("wordBoxes");
+    wordBoxes.innerHTML = "";
+
+    const longDash = document.createElement("div");
+    longDash.textContent = "";
+    longDash.className = "long-dash";
+    longDash.id = "longDash";
+    longDash.style.cssText = `
+    font-size: clamp(32px, 8vw, 72px);
+      color: #6b4eff;
+      letter-spacing: clamp(4px, 1vw, 8px);
+      font-weight: bold;
+      min-width: clamp(200px, 60vw, 300px);
+      min-height: clamp(50px, 12vh, 80px);
+      width: 90%;
+      max-width: 400px;
+      height: clamp(50px, 12vh, 80px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 3px dashed #dee2e6;
+      border-radius: 12px;
+      background: #f8f9fa;
+      margin: 0 auto;
+      text-align: center;
+      padding: 10px;
+      box-sizing: border-box;
+    `;
+
+    wordBoxes.appendChild(longDash);
+
+    // Add timer display at the top
+    const timerDisplay = document.createElement("div");
+    timerDisplay.id = "fullTypingTimer";
+    timerDisplay.style.cssText = `
+      position: fixed;
+      top: clamp(10px, 3vh, 20px);
+      left: 50%;
+      transform: translateX(-50%);
+  background: white;
+      color: #8B5CF6;
+      padding: clamp(12px, 3vh, 16px) clamp(20px, 5vw, 32px);
+      border-radius: clamp(25px, 6vw, 60px);
+      font-size: clamp(20px, 5vw, 32px);
+      font-weight: 900;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+   gap: clamp(8px, 2vw, 12px);
+      border: 4px solid rgba(139, 92, 246, 0.3);
+    `;
+
+    // Add clock icon
+    const clockIcon = document.createElement("span");
+    clockIcon.innerHTML = "⏱️";
+    clockIcon.style.fontSize = "clamp(24px, 6vw, 36px)";
+    timerDisplay.appendChild(clockIcon);
+
+    const timerText = document.createElement("span");
+    timerText.textContent = "16";
+    timerText.style.fontWeight = "900";
+    timerText.style.letterSpacing = "2px";
+    timerDisplay.appendChild(timerText);
+
+    document.body.appendChild(timerDisplay);
+  }
+
+  addNewLabel() {
+    // Find the question type element
+    const questionTypeElement = document.getElementById("questionType");
+
+    // Create NEW label
+    const newLabel = document.createElement("span");
+    newLabel.textContent = "NEW";
+    newLabel.style.cssText = `
+      background: linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%);
+      color: white;
+      padding: clamp(2px, 1vh, 4px) clamp(8px, 2vw, 12px);
+      border-radius: clamp(10px, 3vw, 20px);
+      font-size: clamp(10px, 3vw, 12px);
+      font-weight: bold;
+      margin-left: clamp(6px, 2vw, 12px);
+      display: inline-block;
+      animation: pulse 2s infinite;
+      box-shadow: 0 2px 8px rgba(255, 107, 107, 0.4);
+      text-transform: uppercase;
+      letter-spacing: clamp(0.5px, 0.2vw, 1px);
+    `;
+
+    // Append to question type
+    questionTypeElement.appendChild(newLabel);
+  }
+
+  startFullTypingTimer() {
+    let timeLeft = 16;
+    const timerDisplay = document.getElementById("fullTypingTimer");
+
+    // Clear any existing timer
+    if (this.fullTypingTimer) {
+      clearInterval(this.fullTypingTimer);
+    }
+
+    this.fullTypingTimer = setInterval(() => {
+      timeLeft--;
+      const timerText = timerDisplay.querySelector("span:last-child");
+      timerText.textContent = timeLeft;
+
+      // Change color based on time left
+      if (timeLeft <= 5) {
+        timerDisplay.style.background = "linear-gradient(135deg, #dc3545 0%, #ff6b6b 100%)";
+        timerDisplay.style.animation = "pulse 1s infinite";
+      } else if (timeLeft <= 10) {
+        timerDisplay.style.background = "linear-gradient(135deg, #ffc107 0%, #ffdb4d 100%)";
+        timerDisplay.style.color = "#212529";
+      }
+
+      if (timeLeft <= 0) {
+        clearInterval(this.fullTypingTimer);
+        this.handleFullTypingTimeout();
+      }
+    }, 1000);
+  }
+
+  handleFullTypingTimeout() {
+    // Time's up - mark as incorrect and move to next question
+    const question = this.allQuestions[this.currentQuestionIndex];
+
+    // Show the correct answer
+    this.showFeedback(false, `Time's up! The correct answer is "${question.word.toUpperCase()}"`);
+
+    // Mark as answered
+    this.isAnswered = true;
+    this.stats.total++;
+    this.consecutiveCorrect = 0;
+
+    // Play incorrect sound
+    this.playIncorrectSound();
+
+    // Update the long dash to show the correct answer
+    const longDash = document.getElementById("longDash");
+    if (longDash) {
+      longDash.textContent = question.word.toUpperCase();
+      longDash.style.color = "#dc3545";
+    }
+
+    // Clear timer
+    if (this.fullTypingTimer) {
+      clearInterval(this.fullTypingTimer);
+    }
+
+    // Remove timer display from DOM
+    const timerDisplay = document.getElementById("fullTypingTimer");
+    if (timerDisplay) {
+      timerDisplay.remove();
+    }
+
+    // Show continue button
+    document.getElementById("checkButton").style.display = "none";
+    document.getElementById("continueButton").style.display = "inline-block";
+  }
+
+  updateFullTypingDisplay() {
+    const longDash = document.getElementById("longDash");
+    if (longDash) {
+      if (this.typedWord.length > 0) {
+        longDash.textContent = this.typedWord.toUpperCase();
+        longDash.style.color = "#6b4eff";
+      } else {
+        longDash.textContent = "";
+        longDash.style.color = "#6b4eff";
+      }
+    }
+
+    // Update hidden input for compatibility
+    document.getElementById("wordInput").value = this.typedWord;
+
+    // Enable/disable check button based on whether word is complete
+    const checkButton = document.getElementById("checkButton");
+    const isComplete = this.typedWord.length === this.maxLength;
+    checkButton.disabled = !isComplete;
   }
 
   createWordBoxes() {
@@ -971,7 +1216,11 @@ class SpellingApp {
 
   handlePhysicalKeyboard(e) {
     const question = this.allQuestions[this.currentQuestionIndex];
-    if ((question.type !== "typing" && question.type !== "fillups") || this.isAnswered) return;
+    if (
+      (question.type !== "typing" && question.type !== "fillups" && question.type !== "full-typing") ||
+      this.isAnswered
+    )
+      return;
 
     e.preventDefault();
 
@@ -989,7 +1238,11 @@ class SpellingApp {
 
   handleVirtualKeyboard(key) {
     const question = this.allQuestions[this.currentQuestionIndex];
-    if ((question.type !== "typing" && question.type !== "fillups") || this.isAnswered) return;
+    if (
+      (question.type !== "typing" && question.type !== "fillups" && question.type !== "full-typing") ||
+      this.isAnswered
+    )
+      return;
 
     // Play key click sound
     this.playKeyClickSound();
@@ -1061,7 +1314,11 @@ class SpellingApp {
       this.playLetterSound(letter);
 
       this.typedWord += letter;
-      this.updateWordBoxes();
+      if (question.type === "full-typing") {
+        this.updateFullTypingDisplay();
+      } else {
+        this.updateWordBoxes();
+      }
       this.resetInputState();
     }
   }
@@ -1094,7 +1351,12 @@ class SpellingApp {
 
       // Regular backspace behavior
       this.typedWord = this.typedWord.slice(0, -1);
-      this.updateWordBoxes();
+      // Special handling for full typing - update the long dash display
+      if (question.type === "full-typing") {
+        this.updateFullTypingDisplay();
+      } else {
+        this.updateWordBoxes();
+      }
       this.resetInputState();
     }
   }
@@ -1882,6 +2144,7 @@ class SpellingApp {
 
   async checkAnswer() {
     if (this.isAnswered) return;
+    pushStartedEvent(this.usercode);
 
     // Clear any existing feedback when user clicks check button
     document.getElementById("feedback").classList.remove("show");
@@ -1899,7 +2162,7 @@ class SpellingApp {
 
       userAnswer = this.selectedOption;
       isCorrect = userAnswer.toLowerCase() === question.word.toLowerCase();
-      
+
       // Highlight correct and incorrect answers
       document.querySelectorAll(".option-btn").forEach((btn) => {
         const btnText = btn.textContent.toLowerCase();
@@ -1909,7 +2172,11 @@ class SpellingApp {
           btn.classList.add("incorrect");
         }
       });
-
+      if (!isCorrect) {
+        updateEmojiInProgressBar("by_rating/1");
+      } else {
+        updateEmojiInProgressBar("by_rating/4");
+      }
     } else if (question.type === "typing") {
       userAnswer = this.typedWord.trim().toLowerCase();
       isCorrect = userAnswer === question.word.toLowerCase();
@@ -1937,6 +2204,12 @@ class SpellingApp {
 
       // Always color the word boxes after each attempt
       this.colorWordBoxes(isCorrect);
+
+      if (!isCorrect) {
+        updateEmojiInProgressBar("by_rating/1");
+      } else {
+        updateEmojiInProgressBar("by_rating/4");
+      }
 
       if (!isCorrect) {
         if (this.currentAttempt < this.maxAttempts) {
@@ -1971,6 +2244,62 @@ class SpellingApp {
         this.markSelectedWordParts(correctParts);
         userAnswer = this.wordPartsChosen.join("");
       }
+    } else if (question.type === "full-typing") {
+      userAnswer = this.typedWord.trim().toLowerCase();
+      isCorrect = userAnswer === question.word.toLowerCase();
+
+      // Clear the timer when answer is checked
+      if (this.fullTypingTimer) {
+        clearInterval(this.fullTypingTimer);
+      }
+
+      // Remove timer display from DOM
+      const timerDisplay = document.getElementById("fullTypingTimer");
+      if (timerDisplay) {
+        timerDisplay.remove();
+      }
+
+      // Track check button analytics for typing games
+      if (this.typingAnalytics) {
+        const timeTaken = Math.round(Date.now() / 1000) - this.typingAnalytics.startTime;
+        this.typingAnalytics.check.push({
+          word: this.typedWord,
+          timeTaken: timeTaken,
+          isCorrect: isCorrect,
+        });
+      }
+
+      // Store this attempt (single attempt only)
+      this.previousAttempts.push({
+        word: this.typedWord,
+        isCorrect: isCorrect,
+        attempt: 1,
+      });
+
+      // Update keyboard colors
+      this.updateKeyboardColors(userAnswer, question.word.toLowerCase());
+
+      // Update the long dash display to show result
+      const longDash = document.getElementById("longDash");
+      if (longDash) {
+        longDash.textContent = this.typedWord.toUpperCase();
+        longDash.style.color = isCorrect ? "#28a745" : "#dc3545";
+      }
+
+      if (!isCorrect) {
+        updateEmojiInProgressBar("by_rating/1");
+      } else {
+        updateEmojiInProgressBar("by_rating/4");
+      }
+
+      // Full typing has no second attempts - always proceed to next question
+      if (!isCorrect) {
+        this.showFeedback(false, `Incorrect. The correct answer is "${question.word.toUpperCase()}"`);
+      }
+
+      // Show continue button
+      document.getElementById("checkButton").style.display = "none";
+      document.getElementById("continueButton").style.display = "inline-block";
     } else if (question.type === "letter-scramble") {
       // Letter scramble game checking logic (single attempt)
       userAnswer = this.selectedOption;
@@ -1981,6 +2310,11 @@ class SpellingApp {
 
       // Disable letter tiles after attempt
       this.disableLetterTiles();
+      if (!isCorrect) {
+        updateEmojiInProgressBar("by_rating/1");
+      } else {
+        updateEmojiInProgressBar("by_rating/4");
+      }
     } else if (question.type === "fillups") {
       userAnswer = this.typedWord.trim().toLowerCase();
       isCorrect = userAnswer === question.word.toLowerCase();
@@ -1994,6 +2328,11 @@ class SpellingApp {
 
       // Always color the word boxes after each attempt
       this.colorWordBoxes(isCorrect);
+      if (!isCorrect) {
+        updateEmojiInProgressBar("by_rating/1");
+      } else {
+        updateEmojiInProgressBar("by_rating/4");
+      }
     } else if (question.type === "words-meaning") {
       // Words-meaning game checking logic
       if (this.selectedOption === null || this.selectedOption === undefined) {
@@ -2021,6 +2360,11 @@ class SpellingApp {
           note.classList.add("incorrect");
         }
       });
+      if (!isCorrect) {
+        updateEmojiInProgressBar("by_rating/1");
+      } else {
+        updateEmojiInProgressBar("by_rating/4");
+      }
     } else if (question.type === "context-choice") {
       // Context-choice game checking logic
       if (this.selectedOption === null || this.selectedOption === undefined) {
@@ -2048,6 +2392,11 @@ class SpellingApp {
           btn.classList.add("incorrect");
         }
       });
+      if (!isCorrect) {
+        updateEmojiInProgressBar("by_rating/1");
+      } else {
+        updateEmojiInProgressBar("by_rating/4");
+      }
     } else if (question.type === "correct-sentence") {
       // Correct-sentence game checking logic
       if (this.selectedOption === null || this.selectedOption === undefined) {
@@ -2075,6 +2424,11 @@ class SpellingApp {
           btn.classList.add("incorrect");
         }
       });
+      if (!isCorrect) {
+        updateEmojiInProgressBar("by_rating/1");
+      } else {
+        updateEmojiInProgressBar("by_rating/4");
+      }
     } else {
       userAnswer = this.selectedOption;
       isCorrect = userAnswer && userAnswer.toLowerCase() === question.word.toLowerCase();
@@ -2093,8 +2447,8 @@ class SpellingApp {
     this.isAnswered = true;
     this.stats.total++;
 
-    // Console log analytics for typing games when question is completed
-    if (question.type === "typing" && this.typingAnalytics) {
+    // Calculate and submit analytics for typing games BEFORE animation
+    if ((question.type === "typing" || question.type === "full-typing") && this.typingAnalytics) {
       this.typingAnalytics.endTime = Math.round(getTodayDateNow() / 1000);
     }
 
@@ -2109,7 +2463,7 @@ class SpellingApp {
       }
 
       // Add chain reaction effect for letter-scramble and typing games
-      if (question.type === "letter-scramble" || question.type === "typing") {
+      if (question.type === "letter-scramble" || question.type === "typing" || question.type === "full-typing") {
         this.playChainReactionAnimation();
       }
 
@@ -2326,16 +2680,25 @@ class SpellingApp {
   }
 
   updateKeyboardColors(userWord, correctWord) {
+    // Handle empty or undefined userWord
+    if (!userWord || !correctWord) return;
+
     // Create a map to track which letters in the target word have been matched
     const letterMap = {};
     for (const letter of correctWord) {
       letterMap[letter] = (letterMap[letter] || 0) + 1;
     }
 
+    // Use the length of the user's word, not the correct word
+    const maxLength = Math.max(userWord.length, correctWord.length);
+
     // First pass: mark correct letters
-    for (let i = 0; i < correctWord.length; i++) {
+    for (let i = 0; i < maxLength; i++) {
       const letterInGuess = userWord[i];
       const letterInWord = correctWord[i];
+
+      // Skip if letter doesn't exist in user's word
+      if (!letterInGuess) continue;
 
       if (letterInGuess === letterInWord) {
         // Mark this key on the keyboard
@@ -2346,9 +2709,12 @@ class SpellingApp {
     }
 
     // Second pass: mark present or absent letters
-    for (let i = 0; i < correctWord.length; i++) {
+    for (let i = 0; i < maxLength; i++) {
       const letterInGuess = userWord[i];
       const letterInWord = correctWord[i];
+
+      // Skip if letter doesn't exist in user's word
+      if (!letterInGuess) continue;
 
       // Skip letters already marked as correct
       if (letterInGuess === letterInWord) continue;
@@ -2384,7 +2750,7 @@ class SpellingApp {
 
   startPracticeMode() {
     // Collect all failed words for practice
-    const allFailedWords = [ ...this.stats.failedWords];
+    const allFailedWords = [...this.stats.failedWords];
 
     if (allFailedWords.length === 0) {
       alert("No words to practice!");
@@ -2549,8 +2915,7 @@ class SpellingApp {
     // Enable/disable check button based on whether all letters are typed
     const checkButton = document.getElementById("checkButton");
     if (checkButton) {
-      const isComplete = this.typedWord.length === this.maxLength;
-      checkButton.disabled = !isComplete;
+      checkButton.disabled = this.typedWord.length === 0;
     }
   }
 
@@ -2578,6 +2943,9 @@ class SpellingApp {
       // For typing games, check if word is complete
       const isComplete = this.typedWord.length === this.maxLength;
       checkButton.disabled = !isComplete;
+    } else if (question.type === "full-typing") {
+      // For full typing games, allow checking with any input
+      checkButton.disabled = this.typedWord.length === 0;
     } else {
       // Default behavior for other game types
       checkButton.disabled = false;
@@ -2698,7 +3066,6 @@ class SpellingApp {
     const currentQuestion = this.allQuestions[this.currentQuestionIndex];
     const actualWord = currentQuestion.word;
 
-
     // Get context choice data using the actual word
     const contextData = this.contextChoiceData[actualWord];
     if (!contextData) {
@@ -2784,7 +3151,6 @@ class SpellingApp {
     // Get the actual word from the current question
     const currentQuestion = this.allQuestions[this.currentQuestionIndex];
     const actualWord = currentQuestion.word;
-
 
     // Get correct sentence data using the actual word
     const sentenceData = this.correctSentenceData[actualWord];
@@ -2912,13 +3278,13 @@ class SpellingApp {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     // Stop all speech synthesis immediately
-    if (speechSynthesis.speaking) {
+    if (speechSynthesis && speechSynthesis.speaking) {
       speechSynthesis.cancel();
     }
 
     // Submit typing analytics if needed
     const currentQuestion = this.allQuestions[this.currentQuestionIndex];
-    if (currentQuestion && currentQuestion.type === "typing" && this.typingAnalytics) {
+    if (currentQuestion && (currentQuestion.type === "typing" || currentQuestion.type === "full-typing") && this.typingAnalytics) {
       await this.submitTypingAnalyticsToFirebase();
     }
 
@@ -3003,7 +3369,6 @@ class SpellingApp {
       "lottie/10inarow17.lottie",
       "lottie/10inarow18.lottie",
       "lottie/10inarow19.lottie",
-      
     ];
     // Create hidden preload container
     const preloadContainer = document.createElement("div");
@@ -3019,7 +3384,6 @@ class SpellingApp {
       player.style.height = "0";
       player.setAttribute("preload", "");
       preloadContainer.appendChild(player);
-
     });
 
     // Store reference to preload container for potential cleanup later
@@ -3042,7 +3406,7 @@ class SpellingApp {
     let animationSize = "";
 
     // Arrays of animations for each streak level
-   
+
     // Arrays of animations for each streak level
     const threeInARowAnimations = [
       "lottie/3inarow2.lottie",
@@ -3074,7 +3438,7 @@ class SpellingApp {
       "lottie/3inarow27.lottie",
     ];
     const fiveInARowAnimations = [
-      "lottie/5inarow.lottie", 
+      "lottie/5inarow.lottie",
       "lottie/5inarow2.lottie",
       "lottie/5inarow3.lottie",
       "lottie/5inarow4.lottie",
@@ -3090,26 +3454,24 @@ class SpellingApp {
       "lottie/5inarow19.lottie",
       "lottie/5inarow20.lottie",
       "lottie/5inarow21.lottie",
-
     ];
 
-    const tenInARowAnimations = 
-    ["lottie/10inarow.lottie",
-     "lottie/10inarow2.lottie",
-     "lottie/10inarow3.lottie",
-     "lottie/10inarow4.lottie",
-     "lottie/10inarow5.lottie",
-     "lottie/10inarow10.lottie",
-     "lottie/10inarow11.lottie",
-     "lottie/10inarow12.lottie",
-     "lottie/10inarow13.lottie",
-     "lottie/10inarow14.lottie",
-     "lottie/10inarow15.lottie",
-     "lottie/10inarow16.lottie",
-     "lottie/10inarow17.lottie",
-     "lottie/10inarow18.lottie",
-     "lottie/10inarow19.lottie",
-
+    const tenInARowAnimations = [
+      "lottie/10inarow.lottie",
+      "lottie/10inarow2.lottie",
+      "lottie/10inarow3.lottie",
+      "lottie/10inarow4.lottie",
+      "lottie/10inarow5.lottie",
+      "lottie/10inarow10.lottie",
+      "lottie/10inarow11.lottie",
+      "lottie/10inarow12.lottie",
+      "lottie/10inarow13.lottie",
+      "lottie/10inarow14.lottie",
+      "lottie/10inarow15.lottie",
+      "lottie/10inarow16.lottie",
+      "lottie/10inarow17.lottie",
+      "lottie/10inarow18.lottie",
+      "lottie/10inarow19.lottie",
     ];
 
     // Randomly select an animation for the current streak level
@@ -3211,6 +3573,9 @@ class SpellingApp {
     } else if (question.type === "typing") {
       // For typing, animate the word boxes
       elements = Array.from(document.querySelectorAll(".letter-box"));
+    } else if (question.type === "full-typing") {
+      // For full typing, animate the long dash display
+      elements = [document.getElementById("longDash")].filter(Boolean);
     }
 
     if (elements.length === 0) return;
@@ -3526,7 +3891,7 @@ class SpellingApp {
     await this.markGameCompleted();
 
     // Check if there are failed words and automatically proceed to review
-    const allFailedWords = [ ...this.stats.failedWords];
+    const allFailedWords = [...this.stats.failedWords];
 
     if (this.isPracticeMode) {
       // After review completion, show card directly
@@ -3556,11 +3921,10 @@ class SpellingApp {
     // Hide completion screen
     document.getElementById("completionScreen").style.display = "none";
 
-    // Save points to localStorage before redirecting
-    localStorage.setItem("dailyChallengePoints", points);
+    await pushCompletedEvent(this.usercode);
 
     // Redirect to the completion page only when test is completed
-    window.location.href = "complete.html";
+    window.location.href = "complete.html?code=" + encodeURIComponent(this.usercode);
   }
 
   restartGame() {
@@ -3574,8 +3938,6 @@ class SpellingApp {
   }
 
   async clearGameSession() {
-    localStorage.removeItem("currentGameSession");
-    localStorage.removeItem(`gameProgress-${this.usercode}`);
     this.sessionId = this.generateSessionId(); // Generate new sessionId
   }
 
@@ -3678,6 +4040,7 @@ class SpellingApp {
       console.log("✅ Game progress saved to Firebase");
     } catch (error) {
       console.error("❌ Error saving game progress:", error);
+      logError(`Error saving game progress to Firebase, ${error?.message}`);
     }
   }
 
@@ -3725,6 +4088,7 @@ class SpellingApp {
       }
     } catch (error) {
       console.error("❌ Error loading game progress:", error);
+      logError(`Error loading game progress from Firebase, ${error?.message}`);
       this.gameStarted = getTodayDateISOString();
     }
   }
@@ -3774,6 +4138,7 @@ class SpellingApp {
       console.log("✅ Game analytics updated");
     } catch (error) {
       console.error("❌ Error updating game analytics:", error);
+      logError(`Error updating game analytics to Firebase, ${error?.message}`);
     }
   }
 
@@ -3821,6 +4186,7 @@ class SpellingApp {
       console.log("✅ Game marked as completed");
     } catch (error) {
       console.error("❌ Error marking game as completed:", error);
+      logError(`Error marking game as completed in Firebase, ${error?.message}`);
     }
   }
 
@@ -3875,6 +4241,7 @@ class SpellingApp {
       }
     } catch (error) {
       console.error("❌ Error saving game progress on unload:", error);
+      logError(`Error saving game progress on unload to Firebase, ${error?.message}`);
     }
   }
 }
@@ -3928,6 +4295,7 @@ document.getElementById("startGameBtn").addEventListener("click", async function
               return JSON.parse(data);
             } catch (e) {
               console.warn("Failed to parse JSON string:", data);
+              logError(`Error parsing JSON string: ${data}, ${e?.message}`);
               return {};
             }
           }
@@ -3946,7 +4314,8 @@ document.getElementById("startGameBtn").addEventListener("click", async function
           safeParse(questionData.twoOptionDistractors),
           safeParse(questionData.wordMeanings),
           safeParse(questionData.contextChoice),
-          safeParse(questionData.correctSentence)
+          safeParse(questionData.correctSentence),
+          questionData.wordsWithStreak
         );
       } else {
         console.log("❌ Questions not loaded, staying on username screen");
@@ -3955,6 +4324,7 @@ document.getElementById("startGameBtn").addEventListener("click", async function
       }
     } catch (error) {
       console.error("Error loading questions:", error);
+      logError(`Error loading questions for user code ${code}, ${error?.message}`);
       // Reset button state on error
       startBtn.disabled = false;
       startBtn.textContent = "Start Game";
@@ -3976,7 +4346,7 @@ document.getElementById("usernameInput").addEventListener("keypress", function (
 function initializeLogRocket() {
   // Check if current user is in test mode
   const urlParams = new URLSearchParams(window.location.search);
-  const userCode = urlParams.get("code") || localStorage.getItem("currentUserCode");
+  const userCode = urlParams.get("code");
   const isTestMode = userCode && userCode.toLowerCase().endsWith("test");
 
   if (isTestMode) {
@@ -3993,12 +4363,9 @@ function initializeLogRocket() {
         // Track spelling drill game view
         LogRocket.track("Spelling Drill Game View");
 
-        // Identify user if needed
-        const logRocketUserId = localStorage.getItem("auth_userId");
-        const logRocketUserName = localStorage.getItem("auth_name");
-        if (logRocketUserId) {
-          LogRocket.identify(logRocketUserId, {
-            name: logRocketUserName || "Spelling Drill Player",
+        if (userCode) {
+          LogRocket.identify(userCode, {
+            name: userCode || "Spelling Drill Player",
             gameType: "spelling_drill",
           });
         }
@@ -4006,6 +4373,7 @@ function initializeLogRocket() {
         console.log("✅ LogRocket initialized successfully for user:", userCode);
       } catch (error) {
         console.error("❌ LogRocket initialization failed:", error);
+        logError(`LogRocket initialization error, ${error?.message}`);
       }
     } else {
       console.log("⏳ LogRocket not yet available, retrying...");
@@ -4086,6 +4454,7 @@ async function fetchQuestionsFromFirebase(userCode = null) {
     return documentData;
   } catch (error) {
     console.error("❌ Error fetching questions from Firebase:", error);
+    logError(`Error fetching questions from Firebase for user code ${userCode}, ${error?.message}`);
     alert("Test is not active");
     return null;
   }
